@@ -17,6 +17,18 @@ type cityStats struct {
 	count int
 }
 
+func cleanCityName(b []byte) []byte {
+	// Remove BOM UTF-8 (EF BB BF)
+	if len(b) >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF {
+		b = b[3:]
+	}
+	// Remove outros caracteres invisíveis no início
+	for len(b) > 0 && (b[0] < 32 || b[0] == 0xEF || b[0] == 0xBB || b[0] == 0xBF) {
+		b = b[1:]
+	}
+	return bytes.TrimSpace(b)
+}
+
 func bytesToNumber(b []byte) (int, bool) {
 	if len(b) < 3 {
 		return 0, false
@@ -65,20 +77,14 @@ func main() {
 
 	defer file.Close()
 	// count := 0
-	// totalReadTime := time.Duration(0)
 
 	go func() {
 		buf := make([]byte, 1024*1024*50)
 		for {
-			// readStart := time.Now()
+
 			scanner, err := file.Read(buf)
-			// readTime := time.Since(readStart)
-			// totalReadTime += readTime
 
 			if err != nil {
-				// fmt.Printf("\nFinalizou leitura após %d chunks\n", count)
-				// fmt.Printf("Tempo total de leitura: %v\n", totalReadTime)
-				// fmt.Printf("Tempo médio por chunk: %v\n", totalReadTime/time.Duration(count))
 				close(ch)
 				return
 			}
@@ -96,12 +102,8 @@ func main() {
 			}
 
 			// count++
-			// fmt.Printf("Chunk %3d: leu %6d bytes em %8v\n", count, scanner, readTime)
 
-			// if count > 100 {
-			// 	fmt.Printf("\nFinalizou leitura após %d chunks\n", count)
-			// 	fmt.Printf("Tempo total de leitura: %v\n", totalReadTime)
-			// 	fmt.Printf("Tempo médio por chunk: %v\n", totalReadTime/time.Duration(count))
+			// if count > 20 {
 			// 	close(ch)
 			// 	break
 			// }
@@ -111,22 +113,12 @@ func main() {
 
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU() - 1
-	processCount := 0
-	totalProcessTime := time.Duration(0)
-	var mu sync.Mutex
 
 	for range numWorkers {
 		wg.Go(func() {
 			for buf := range ch {
-				processStart := time.Now()
-				result := processesBuffer(buf)
-				processTime := time.Since(processStart)
 
-				mu.Lock()
-				processCount++
-				totalProcessTime += processTime
-				fmt.Printf("Process %3d: processou %6d bytes em %8v\n", processCount, len(buf), processTime)
-				mu.Unlock()
+				result := processesBuffer(buf)
 
 				results <- result
 			}
@@ -165,13 +157,22 @@ func main() {
 	}
 	sort.Strings(cityNames)
 
-	fmt.Printf("\n=== RESUMO ===\n")
-	fmt.Printf("Total de cidades processadas: %d\n", len(cities))
-	fmt.Printf("Total de chunks processados: %d\n", processCount)
-	fmt.Printf("Tempo total de processamento: %v\n", totalProcessTime)
-	if processCount > 0 {
-		fmt.Printf("Tempo médio por chunk: %v\n", totalProcessTime/time.Duration(processCount))
+	// Print results in the required format
+	fmt.Print("{")
+	for i, city := range cityNames {
+		stats := cities[city]
+		min := float64(stats.min) / 10.0
+		mean := float64(stats.total) / float64(stats.count) / 10.0
+		max := float64(stats.max) / 10.0
+
+		if i > 0 {
+			fmt.Print(", ")
+		}
+		fmt.Printf("%s=%.1f/%.1f/%.1f", city, min, mean, max)
 	}
+	fmt.Println("}")
+
+	fmt.Printf("\nTotal de cidades processadas: %d\n", len(cities))
 
 	elapsed := time.Since(start)
 	fmt.Printf("\nTempo TOTAL de execução: %.2f segundos (%.2f ms)\n", elapsed.Seconds(), float64(elapsed.Milliseconds()))
@@ -190,7 +191,7 @@ func processesBuffer(buf []byte) map[string]cityStats {
 			continue
 		}
 
-		city := string(parts[0])
+		city := string(cleanCityName(parts[0]))
 		num, ok := bytesToNumber(parts[1])
 		if !ok {
 			continue
